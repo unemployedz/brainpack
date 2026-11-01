@@ -7,6 +7,28 @@ const LIMITS = {
   maxEntries: 5000,
 };
 
+const TEXT_EXTENSIONS = new Set((
+  "txt md mdx markdown rst adoc asciidoc org " +
+  "js mjs cjs jsx ts mts cts tsx py pyw pyx pyi rs go mod sum " +
+  "c h cc cpp cxx hpp hxx hh inl cs fs fsx fsi vb java kt kts scala sc clj cljs cljc edn groovy gradle " +
+  "swift m mm rb rake gemspec php phtml php3 php4 php5 phps html htm xhtml css scss sass less styl vue svelte astro " +
+  "json jsonc json5 jsonl yaml yml toml ini cfg conf config env properties xml xsd xsl xslt dtd svg " +
+  "sh bash zsh fish ps1 psm1 psc1 bat cmd sql mysql pgsql plsql graphql gql proto dart lua r rmd jl pl pm t cl hs lhs elm ex exs e erl hrl " +
+  "ml mli fth forth factor sol vy move cairo circom tf tfvars hcl nix dockerfile make mk cmake gitignore gitattributes editorconfig prettierrc babelrc npmrc nvmrc csv tsv tex bib ipynb diff patch log"
+).split(/\s+/));
+
+const CODE_EXTENSIONS = new Set((
+  "js mjs cjs jsx ts mts cts tsx py pyw pyx pyi rs go c h cc cpp cxx hpp hxx hh cs fs fsx fsi vb java kt kts scala sc clj cljs cljc groovy swift m mm rb php dart lua r jl pl hs lhs elm ex exs e erl ml mli sol vy move cairo html htm xhtml css scss sass less styl vue svelte astro sql sh bash zsh fish ps1 graphql gql proto tf tfvars hcl nix dockerfile make mk cmake"
+).split(/\s+/));
+
+function fileExtension(path) {
+  const name = path.split("/").pop().toLowerCase();
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1) : "";
+}
+function isTextExtension(path) { return TEXT_EXTENSIONS.has(fileExtension(path)); }
+function isCodeExtension(path) { return CODE_EXTENSIONS.has(fileExtension(path)); }
+
 function crc32(bytes) {
   let crc = 0xffffffff;
   for (let i = 0; i < bytes.length; i++) {
@@ -223,12 +245,18 @@ class BrainPackModal extends Modal {
       text: conflicts ? conflicts + " existing paths detected." : "No existing file paths detected.",
       cls: conflicts ? "brainpack-warning" : "brainpack-success",
     });
+    const codeCount = this.zip.entries.filter((entry) => isCodeExtension(entry.path)).length;
+    const textCount = this.zip.entries.filter((entry) => isTextExtension(entry.path)).length;
+    contentEl.createEl("p", {
+      text: codeCount + " recognized code files · " + textCount + " text-based files. Other extensions are still imported as binary files.",
+      cls: "brainpack-success",
+    });
     const list = contentEl.createDiv({ cls: "brainpack-preview-list" });
     const preview = this.zip.entries.slice(0, 12);
     for (const entry of preview) {
       const row = list.createDiv({ cls: "brainpack-preview-row" });
       row.createEl("span", { text: entry.path, cls: "brainpack-preview-name" });
-      row.createEl("span", { text: formatBytes(entry.uncompressedSize), cls: "brainpack-muted" });
+      row.createEl("span", { text: (isCodeExtension(entry.path) ? "CODE · " : isTextExtension(entry.path) ? "TEXT · " : "FILE · ") + formatBytes(entry.uncompressedSize), cls: "brainpack-muted" });
     }
     if (this.zip.entries.length > preview.length) list.createEl("div", {
       text: "And " + (this.zip.entries.length - preview.length) + " more files…",
@@ -267,16 +295,23 @@ class BrainPackModal extends Modal {
         progress.value = i;
         try {
           const bytes = await extractEntry(this.zip, entry);
+          let textContent = null;
+          if (isTextExtension(entry.path)) {
+            try { textContent = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+            catch (_) { textContent = null; }
+          }
           const parent = entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "";
           await ensureFolder(this.app.vault, parent);
           const existing = this.app.vault.getAbstractFileByPath(entry.path);
           if (existing) {
             if (conflictMode === "replace" && existing.children === undefined) {
-              await this.app.vault.modifyBinary(existing, exactArrayBuffer(bytes));
+              if (textContent !== null) await this.app.vault.modify(existing, textContent);
+              else await this.app.vault.modifyBinary(existing, exactArrayBuffer(bytes));
               imported++;
             } else skipped++;
           } else {
-            await this.app.vault.createBinary(entry.path, exactArrayBuffer(bytes));
+            if (textContent !== null) await this.app.vault.create(entry.path, textContent);
+            else await this.app.vault.createBinary(entry.path, exactArrayBuffer(bytes));
             imported++;
           }
         } catch (error) {
