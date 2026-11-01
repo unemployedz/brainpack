@@ -1,0 +1,9 @@
+{
+  "id": "brainpack",
+  "name": "BrainPack",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.12",
+  "description": "Import complete ZIP archives into your vault while preserving folders, binary data, and file extensions.",
+  "author": "BrainPack",
+  "isDesktopOnly": false
+}
